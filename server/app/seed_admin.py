@@ -24,17 +24,22 @@ def create_admin(email: str, name: str, password: str) -> None:
         if existing_user:
             raise ValueError(f"User with email '{email}' already exists.")
 
-        admin_role = db.get(RoleRecord, "admin")
-        if admin_role is None:
-            admin_role = RoleRecord(name="admin", description="Platform administrator")
-            db.add(admin_role)
-            db.flush()
+        roles = {
+            "admin": "Platform administrator",
+            "warehouse_manager": "Warehouse manager",
+            "fulfillment_agent": "Fulfillment agent",
+            "customer": "Customer",
+        }
+        for role_name, description in roles.items():
+            if db.get(RoleRecord, role_name) is None:
+                db.add(RoleRecord(name=role_name, description=description))
+        db.flush()
 
         admin = User(
             full_name=name,
             email=email,
             password_hash=hash_password(password),
-            role=admin_role.name,
+            role="admin",
             is_active=True,
         )
 

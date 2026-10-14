@@ -20,8 +20,8 @@ class UserCreateInput(RegisterInput):
 
 
 class LoginInput(BaseModel):
-    email: EmailStr="admin@gmail.com"
-    password: str="Newpass@123"
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
 
 
 class RefreshInput(BaseModel):
@@ -43,6 +43,7 @@ class UserOutput(ORMModel):
 class TokenOutput(BaseModel):
     access_token: str
     refresh_token: str
+    expires_at: str
     token_type: str = "bearer"
     user: UserOutput
 

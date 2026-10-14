@@ -233,6 +233,9 @@ def update_expected_delivery(db: Session, user: User, order: Order, expected_del
         raise DomainError("INVALID_DELIVERY_DATE", "Expected delivery date must be in the future", 422)
 
     previous_expected_delivery_at = order.expected_delivery_at
+    if previous_expected_delivery_at is not None and previous_expected_delivery_at.tzinfo is None:
+        previous_expected_delivery_at = previous_expected_delivery_at.replace(tzinfo=timezone.utc)
+        order.expected_delivery_at = previous_expected_delivery_at
     if previous_expected_delivery_at == expected_delivery_at:
         return order
 

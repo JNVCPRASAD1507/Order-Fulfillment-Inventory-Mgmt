@@ -41,21 +41,18 @@ CREATE DATABASE fulfillment OWNER fulfillment_user;
 \q
 ```
 
-Configure the connection and application secrets in the same PowerShell window
-you will use for migrations and to run the API:
+Copy `server/.env.example` to `server/.env` and replace the database password
+and secret:
 
 ```powershell
-$env:DATABASE_URL = "postgresql+psycopg2://fulfillment_user:replace-with-a-strong-password@localhost:5432/fulfillment"
-$env:SECRET_KEY = "replace-with-a-long-random-secret"
-$env:ACCESS_TOKEN_MINUTES = "1440"
-$env:REFRESH_TOKEN_DAYS = "14"
+Copy-Item .env.example .env
+notepad .env
 ```
 
-`app.config` reads these process environment variables (which override values in
-`.env.example`). These PowerShell values last only for that window. Set them in
-your deployment environment for production; do not commit database passwords
-or signing secrets. If the database password contains URL-reserved characters,
-URL-encode those characters in `DATABASE_URL`.
+`app.config` loads `.env` for local development; process environment variables
+still override the file. Do not commit `.env` or production secrets. If the
+database password contains URL-reserved characters, URL-encode those
+characters in `DATABASE_URL`.
 
 ### Install, migrate, and run
 
@@ -68,11 +65,15 @@ URL-encode those characters in `DATABASE_URL`.
    ```
 
    On macOS/Linux, use `python3 -m venv .venv` and `source .venv/bin/activate`.
-2. Apply migrations:
+2. Copy `.env.example` to `.env`, set `DATABASE_URL` and `SECRET_KEY`, then apply migrations:
 
    ```powershell
+   Copy-Item .env.example .env
+   notepad .env
    alembic upgrade head
    ```
+   The initial migration creates all tables, indexes, constraints, the four
+   application roles, and the default 0% tax configuration.
 3. Create the initial administrator:
 
    ```powershell

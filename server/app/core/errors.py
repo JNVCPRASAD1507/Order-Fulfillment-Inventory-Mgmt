@@ -15,3 +15,4 @@ def not_found(entity: str) -> DomainError:
 
 def forbidden(code: str = "FORBIDDEN", message: str = "You are not authorized to access this resource") -> DomainError:
     return DomainError(code, message, status.HTTP_403_FORBIDDEN)
+

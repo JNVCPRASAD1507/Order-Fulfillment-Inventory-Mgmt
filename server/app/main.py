@@ -26,3 +26,8 @@ app.include_router(notifications.router, tags=["Notifications"])
 app.include_router(dashboard.router, tags=["Dashboard"])
 app.include_router(audit_logs.router, tags=["Audit logs"])
 app.include_router(settings_router.router, tags=["Settings"])
+
+
+@app.get("/health", tags=["System"])
+def health_check():
+    return {"status": "ok"}
