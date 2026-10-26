@@ -1,0 +1,22 @@
+{
+  "info": {
+    "name": "Order Fulfillment Inventory Platform",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://127.0.0.1:8000"},
+    {"key": "token", "value": ""}
+  ],
+  "item": [
+    {"name": "Register", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"email\":\"customer@example.com\",\"full_name\":\"Customer One\",\"password\":\"Customer@12345\",\"role\":\"customer\"}"}, "url": "{{base_url}}/api/auth/register"}},
+    {"name": "Login", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"email\":\"customer@example.com\",\"password\":\"Customer@12345\"}"}, "url": "{{base_url}}/api/auth/login"}},
+    {"name": "Me", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/auth/me"}},
+    {"name": "Products", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/products"}},
+    {"name": "Warehouses", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/warehouses"}},
+    {"name": "Inventory", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/inventory"}},
+    {"name": "Low Stock", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/inventory/low-stock"}},
+    {"name": "Orders", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/orders?page=1&page_size=20"}},
+    {"name": "Notifications", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/notifications"}},
+    {"name": "Dashboard", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{token}}"}], "url": "{{base_url}}/api/dashboard"}}
+  ]
+}

@@ -1,237 +1,382 @@
-# Order-Fulfillment-Inventory-Management-Platform
+# Order Fulfillment & Inventory Management Platform
 
-A role-aware REST API for customer orders, warehouse inventory, fulfillment, returns, and audit history. It uses Python, FastAPI, SQLAlchemy, Alembic, Pydantic, PostgreSQL, and Pytest.
+Production-oriented FastAPI REST API for an order fulfillment system with PostgreSQL, SQLAlchemy, Alembic, JWT authentication, RBAC, warehouse authorization, inventory reservations, transactional transfers, order state transitions, notifications, audit logging, idempotency storage, reporting, Docker and Pytest.
 
-## Requirements implemented
-
-- JWT access and refresh tokens with rotation, revocation, password hashing, and inactive-account protection.
-- Admin, warehouse manager, fulfillment agent, and customer roles, with warehouse-scoped authorization.
-- Product, category, warehouse, and warehouse-membership management.
-- Per-warehouse inventory balances and an inventory transaction ledger.
-- Order placement with automatic warehouse selection, atomic stock reservation, immutable price/tax snapshots, lifecycle history, cancellation, and fulfillment.
-- Agent assignment/reassignment, generated expected delivery estimates, and staff-managed delivery-date changes.
-- Return requests, approval, receipt/restocking, and demo refund-status handling.
-- In-app notifications, audit logs, dashboards, filtering, sorting, pagination, and idempotency support.
-
-## Technology and prerequisites
-
-- Python 3.11 or newer
-- PostgreSQL 14 or newer
-- Packages listed in `requirements.txt`
-
-SQLite is used for fast API tests by default. PostgreSQL is required to verify row-locking concurrency and PostgreSQL append-only ledger behavior.
-
-## Local setup
-
-### Create and configure the PostgreSQL database
-
-Make sure PostgreSQL is installed and running, then use `psql` (or pgAdmin) to
-create a dedicated login and database. In PowerShell, replace the example
-password with a strong password:
-
-```powershell
-psql -U postgres
-```
-
-At the `psql` prompt:
-
-```sql
-CREATE USER fulfillment_user WITH PASSWORD 'replace-with-a-strong-password';
-CREATE DATABASE fulfillment OWNER fulfillment_user;
-\q
-```
-
-Copy `server/.env.example` to `server/.env` and replace the database password
-and secret:
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
-```
-
-`app.config` loads `.env` for local development; process environment variables
-still override the file. Do not commit `.env` or production secrets. If the
-database password contains URL-reserved characters, URL-encode those
-characters in `DATABASE_URL`.
-
-### Install, migrate, and run
-
-1. Create and activate a virtual environment, then install dependencies:
-
-   ```powershell
-   py -3.11 -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install -r requirements.txt
-   ```
-
-   On macOS/Linux, use `python3 -m venv .venv` and `source .venv/bin/activate`.
-2. Copy `.env.example` to `.env`, set `DATABASE_URL` and `SECRET_KEY`, then apply migrations:
-
-   ```powershell
-   Copy-Item .env.example .env
-   notepad .env
-   alembic upgrade head
-   ```
-   The initial migration creates all tables, indexes, constraints, the four
-   application roles, and the default 0% tax configuration.
-3. Create the initial administrator:
-
-   ```powershell
-   python -m app.seed_admin
-   ```
-
-   The command prompts for administrator name, email, and password. It also accepts `ADMIN_NAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` environment variables. Only one administrator account is permitted; public registration creates customers.
-4. Run the development server:
-
-   ```powershell
-   uvicorn app.main:app --reload
-   ```
-5. Open Swagger at <http://127.0.0.1:8000/docs>. Import [Postman Collection.json](<./Postman Collection.json>) for example requests.
-
-## Configuration
-
-| Setting | Purpose |
-| --- | --- |
-| `DATABASE_URL` | SQLAlchemy URL, e.g. `postgresql+psycopg2://user:password@localhost:5432/orders_db` |
-| `SECRET_KEY` | Shared JWT signing secret; set a strong secret outside source control |
-| `ACCESS_TOKEN_MINUTES` | Access-token lifetime |
-| `REFRESH_TOKEN_DAYS` | Refresh-token lifetime |
-| `ADMIN_NAME` | Optional initial-admin provisioning input |
-| `ADMIN_EMAIL` | Optional initial-admin provisioning input |
-| `ADMIN_PASSWORD` | Optional initial-admin provisioning input |
-
-The tax percentage is database configuration, not an environment variable. It starts at 0%. Authenticated users can read it with `GET /settings/tax-rate`; only admins can change it with `PUT /settings/tax-rate`, for example `{"rate_percent":18}`.
-
-## Roles and authorization
-
-| Role | Access |
-| --- | --- |
-| **Admin** | Manage users, products, categories, warehouses, warehouse memberships, and tax; view/manage all orders and warehouses; assign agents; access admin dashboard and audit logs. |
-| **Warehouse manager** | Manage inventory and warehouse details within assigned warehouses; view/manage scoped orders and returns; assign agents authorized for the same warehouse; access that warehouse's dashboard. |
-| **Fulfillment agent** | View inventory and orders within assigned warehouses; process orders currently assigned to them. |
-| **Customer** | Register/login; place orders; view own orders and notifications; cancel eligible orders; confirm demo payment; request eligible returns. |
-
-Protected routes require `Authorization: Bearer <access_token>`. Admins authorize warehouse managers and fulfillment agents through:
-
-- `GET /warehouses/{warehouse_id}/users`
-- `POST /warehouses/{warehouse_id}/users` with `{"user_id":4}`
-- `DELETE /warehouses/{warehouse_id}/users/{user_id}`
-
-Only active users with the warehouse-manager or fulfillment-agent role may be assigned to a warehouse. Agents must be authorized for an order's warehouse before assignment.
-
-## API overview
-
-See the full [API reference](./docs/api.md) for endpoint permissions, request parameters and bodies, response shapes, state transitions, and error behavior. The live Swagger/OpenAPI docs are at `/docs`. Import [Postman Collection.json](<./Postman Collection.json>) into Postman for request examples.
-
-See the [entity-relationship diagram](./docs/er-diagram.md) for the database entities, foreign-key relationships, and key integrity constraints.
-
-See the [system architecture](./docs/architecture.md) for application components, request flow, transaction boundaries, and integration scope.
-
-### Authentication
-
-`POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, and `POST /auth/change-password`.
-
-Registration creates a customer. Login returns access and refresh tokens. Refresh rotates the refresh token; logout revokes refresh tokens and invalidates existing access tokens.
-
-### Catalog, users, and warehouses
-
-- Users: `POST /users`, `GET /users`, `GET /users/{user_id}`, `PUT /users/{user_id}` (admin).
-- Products: `POST /products`, `GET /products`, `GET /products/{product_id}`, `PUT /products/{product_id}`. Admin-only writes; updates include activation/deactivation.
-- Categories: `POST /categories`, `GET /categories`, `GET /categories/{category_id}`, `PUT /categories/{category_id}`. Admin-only writes.
-- Warehouses: `POST /warehouses`, `GET /warehouses`, `GET /warehouses/{warehouse_id}`, `PUT /warehouses/{warehouse_id}`.
-- Warehouse members: the three admin-only routes listed above.
-
-### Inventory
-
-- `GET /inventory` — List/filter balances.
-- `GET /inventory/{product_id}` — Get a product's balance(s), optionally scoped by `warehouse_id`.
-- `GET /inventory/low-stock` and `GET /inventory/out-of-stock` — Query low or zero available stock.
-- `POST /inventory/adjust` — Add initial stock or adjust an existing balance.
-- `POST /inventory/transfer` — Transfer stock between authorized warehouses.
-- `GET /inventory/transactions` and `GET /inventory/transactions/{transaction_id}` — Read the inventory ledger.
-
-Inventory records track available, reserved, damaged, and reorder-level quantities. An adjustment can create the product/warehouse balance if it does not exist. Each stock change records a transaction. Warehouse managers receive in-app `low_stock` and `out_of_stock` notifications when available stock crosses the corresponding thresholds; cancellation/failure releases reserved stock and sends `stock_restored`.
-
-### Orders and fulfillment
-
-- `POST /orders` — Customer creates an order.
-- `GET /orders` — List visible orders (customer-owned or warehouse-scoped for staff).
-- `GET /orders/{order_id}`, `GET /orders/{order_id}/items`, `GET /orders/{order_id}/history`.
-- `POST /orders/{order_id}/cancel` — Customer cancels an eligible order.
-- `PUT /orders/{order_id}` — Admin or authorized warehouse staff changes status and/or expected delivery date.
-- `POST /orders/{order_id}/assign` and `/orders/{order_id}/reassign` — Admin or authorized warehouse manager assigns an active, warehouse-authorized agent.
-- `GET /fulfillment/orders/pending` — Pending orders visible to warehouse staff.
-- `GET /fulfillment/orders/assigned-to-me` — Agent's current assignments.
-- `POST /fulfillment/orders/{order_id}/accept`, `/start-processing`, `/pack`, `/ship`, `/deliver`, and `/fail` — Fulfillment transitions.
-
-Customer requests contain product IDs and quantities (plus optional discount); customers do not select the warehouse, expected delivery date, or tax. The service selects an active warehouse with enough stock for the entire basket. If several warehouses qualify, the current implementation selects the eligible warehouse with the lowest ID. Expected delivery is estimated at five calendar days after placement; authorized staff can update the future date, notifying the customer.
-
-The normal status flow is `pending -> confirmed -> processing -> packed -> shipped -> delivered`. Cancellation, failure, and return transitions are constrained by the service state machine. Cancellation releases reservations; shipment consumes reserved stock.
-
-### Returns, payments, notifications, dashboards, tax, and audit
-
-- Returns: `POST /returns`, `GET /returns`, `GET /returns/{return_id}`, `GET /returns/{return_id}/items`, and admin/warehouse-manager actions `POST /returns/{return_id}/approve`, `/reject`, `/receive`, `/refund`.
-- Payments: `POST /payments/{order_id}/confirm`, `GET /payments/{order_id}`.
-- Notifications: `GET /notifications`, `GET /notifications/{notification_id}`, `PATCH /notifications/{notification_id}/read`, `PATCH /notifications/read-all`.
-- Dashboards: `GET /dashboard/admin`, `GET /dashboard/warehouse?warehouse_id={id}`, `GET /dashboard/customer`.
-- Tax: `GET /settings/tax-rate`, `PUT /settings/tax-rate` (admin-only update).
-- Audit: `GET /audit-logs`, `GET /audit-logs/{audit_id}` (admin).
-
-Return workflow: `requested -> approved -> received -> refunded`, or `requested -> rejected`. Returned stock is put back into inventory at receipt. Payment and refund handling is demo-only and does not send or verify real money.
-
-## Order pricing and tax
+## 1. Architecture
 
 ```text
-subtotal   = product price × quantity
-taxable    = subtotal − discount
-tax        = taxable × configured tax rate / 100 (rounded to 2 decimal places)
-line total = taxable + tax
+Client / Postman / Frontend
+          |
+          v
+      FastAPI Routes
+          |
+   Dependencies / JWT / RBAC
+          |
+          v
+       Services
+   /        |        \
+Auth   Orders/Inventory   Audit/Notify
+          |
+          v
+      SQLAlchemy ORM
+          |
+          v
+      PostgreSQL
 ```
 
-The tax rate is 0–100 percent, to two decimal places, and initially 0%. The order item stores snapshots of unit price, discount, applied tax rate, tax amount, and total, preserving order history when the product price or configured tax rate changes.
+Business rules belong in services. Routes validate HTTP input, authorize the request and call services. PostgreSQL is the source of truth.
 
-## Example: place an order
+## 2. Main business flow
 
-Login as the customer:
-
-```http
-POST /auth/login
-Content-Type: application/json
-
-{"email":"customer@example.com","password":"your-password"}
+```text
+Register -> Login -> Access Token
+                     |
+Customer -> Create Order
+                     |
+                     v
+             DB transaction begins
+                     |
+          Lock inventory row FOR UPDATE
+                     |
+       Check available >= requested qty
+                     |
+      available -= qty; reserved += qty
+                     |
+        create inventory transaction
+                     |
+          create order + order items
+                     |
+       audit + notification + commit
 ```
 
-Then use the returned access token:
+### Concurrency strategy
+Inventory reservation locks the exact `(product_id, warehouse_id)` inventory row using PostgreSQL `SELECT ... FOR UPDATE`. Two concurrent orders therefore serialize on the same inventory row. The second transaction sees the first transaction's committed quantity and fails with `INSUFFICIENT_INVENTORY` when stock is exhausted. Inventory transfer locks source/destination rows in deterministic warehouse-id order to reduce deadlock risk.
 
-```http
-POST /orders
-Authorization: Bearer <access_token>
-Content-Type: application/json
+## 3. Roles
 
-{"items":[{"product_id":1,"quantity":2}]}
+- `admin`: global management
+- `warehouse_manager`: authorized warehouse inventory/fulfillment operations
+- `fulfillment_agent`: processes orders in authorized warehouses
+- `customer`: own orders and returns
+
+Warehouse membership is stored in `warehouse_users` and checked for resource authorization.
+
+## 4. Requirements
+
+- Python 3.12+
+- PostgreSQL 15+
+- Docker Desktop optional
+
+## 5. Local Windows PowerShell setup
+
+```powershell
+cd order_fulfillment_inventory_platform
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-`Idempotency-Key` is optional for order creation, inventory adjustment/transfer, and payment confirmation. Clients that send a key should reuse it only to retry the same operation. Payment confirmation remains retry-safe when its optional key is omitted; the server derives a stable key for that order.
+Edit `.env` with your PostgreSQL credentials.
 
-## Pagination and filtering
+Create the database:
 
-Paged list routes use one-based `page` and `page_size` parameters; maximum page size is 100. Orders support status, customer, warehouse, payment status, date range, total range, and sorting by creation date, total, or status. Inventory supports product/warehouse and low/out-of-stock filters. Notifications support `unread_only`.
+```sql
+CREATE DATABASE order_platform;
+```
 
-## Data integrity and concurrency
-
-- Order creation reserves available inventory using conditional database updates in one transaction. Competing PostgreSQL requests serialize on inventory rows; a request cannot reserve units no longer available.
-- A failed basket reservation rolls back the order, line items, reservation ledger, audit, and notification writes.
-- Inventory adjustments and transfers lock rows; order status changes lock the order. Cancellation, shipping, and receipt of returned goods update balances and ledger entries transactionally.
-- Inventory transactions and audit logs are append-only in PostgreSQL.
-- An idempotency key is scoped to user and endpoint. Reusing a key with a different request returns HTTP 409.
-
-## Migrations and tests
+Run migrations:
 
 ```powershell
 alembic upgrade head
-pytest
+python seed.py
 ```
 
-Tests use in-memory SQLite unless `TEST_POSTGRESQL_URL` is set. PostgreSQL-specific concurrency and immutable-ledger tests are skipped otherwise. When setting `TEST_POSTGRESQL_URL`, use a disposable database or isolated schema: tests create and drop mapped tables in that target. 
+Start API:
 
+```powershell
+uvicorn app.main:app --reload
+```
 
+Open Swagger: `http://127.0.0.1:8000/docs`
+Open ReDoc: `http://127.0.0.1:8000/redoc`
+Health: `http://127.0.0.1:8000/health`
+
+## 6. Docker
+
+```powershell
+docker compose up --build
+```
+
+The API will be on port 8000 and PostgreSQL on 5432. The API container runs `alembic upgrade head` before starting Uvicorn.
+
+## 7. Seed account
+
+After `python seed.py`:
+
+- Email: `admin@example.com`
+- Password: `Admin@12345`
+
+Change the password immediately in any non-demo environment.
+
+## 8. Authentication flow
+
+### Register
+`POST /api/auth/register`
+
+```json
+{
+  "email": "customer@example.com",
+  "full_name": "Customer One",
+  "password": "Customer@12345",
+  "role": "customer"
+}
+```
+
+### Login
+`POST /api/auth/login`
+
+```json
+{"email":"customer@example.com","password":"Customer@12345"}
+```
+
+Copy `access_token` and send:
+
+```text
+Authorization: Bearer <access_token>
+```
+
+### Refresh
+`POST /api/auth/refresh`
+
+```json
+{"refresh_token":"<refresh token>"}
+```
+
+Refresh-token rotation revokes the old refresh token and creates a new one.
+
+### Logout
+`POST /api/auth/logout`
+
+```json
+{"refresh_token":"<refresh token>"}
+```
+
+## 9. API endpoint guide
+
+### Authentication
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| POST | `/api/auth/register` | Public | Register |
+| POST | `/api/auth/login` | Public | Login |
+| POST | `/api/auth/refresh` | Public | Rotate refresh token |
+| POST | `/api/auth/logout` | Auth | Revoke refresh token |
+| GET | `/api/auth/me` | Auth | Current user |
+| POST | `/api/auth/change-password` | Auth | Change password |
+
+### Products
+| Method | Endpoint | Access |
+|---|---|---|
+| POST | `/api/products` | Admin |
+| GET | `/api/products` | Auth |
+| GET | `/api/products/{id}` | Auth |
+| PATCH | `/api/products/{id}` | Admin |
+| POST | `/api/products/{id}/activate` | Admin |
+| POST | `/api/products/{id}/deactivate` | Admin |
+
+Create example:
+
+```json
+{"sku":"SKU-2001","name":"Laptop Bag","description":"Demo","category_id":1,"price":1200,"cost_price":700}
+```
+
+### Warehouses
+| Method | Endpoint | Access |
+|---|---|---|
+| POST | `/api/warehouses` | Admin |
+| GET | `/api/warehouses` | Auth |
+| GET | `/api/warehouses/{id}` | Authorized |
+| PATCH | `/api/warehouses/{id}` | Admin |
+| POST | `/api/warehouses/{id}/activate` | Admin |
+| POST | `/api/warehouses/{id}/deactivate` | Admin |
+| POST | `/api/warehouses/{id}/users/{user_id}` | Admin/Manager |
+
+### Inventory
+| Method | Endpoint | Access |
+|---|---|---|
+| GET | `/api/inventory` | Auth |
+| GET | `/api/inventory/{product_id}` | Auth |
+| GET | `/api/inventory/low-stock` | Auth |
+| POST | `/api/inventory/adjust` | Admin/Manager |
+| POST | `/api/inventory/transfer` | Admin/Manager |
+
+Adjustment:
+
+```json
+{"product_id":1,"warehouse_id":1,"quantity":100,"reason":"Initial stock","idempotency_key":"initial-001"}
+```
+
+Transfer:
+
+```json
+{"product_id":1,"from_warehouse_id":1,"to_warehouse_id":2,"quantity":20,"reason":"Rebalancing","idempotency_key":"transfer-001"}
+```
+
+### Orders
+| Method | Endpoint | Access |
+|---|---|---|
+| POST | `/api/orders` | Customer |
+| GET | `/api/orders` | Auth |
+| GET | `/api/orders/{id}` | Scoped |
+| POST | `/api/orders/{id}/status` | Scoped |
+| POST | `/api/orders/{id}/assign` | Admin/Manager |
+
+Create order:
+
+```json
+{
+  "warehouse_id":1,
+  "items":[
+    {"product_id":1,"quantity":2,"discount":0,"tax":10}
+  ],
+  "idempotency_key":"order-2026-0001"
+}
+```
+
+Order states:
+
+```text
+PENDING -> CONFIRMED -> PROCESSING -> PACKED -> SHIPPED -> DELIVERED -> RETURNED
+   |          |             |
+   +----------+-------------+----> CANCELLED
+```
+
+Invalid transitions return HTTP 409.
+
+### Returns
+| Method | Endpoint | Access |
+|---|---|---|
+| POST | `/api/returns` | Customer |
+| POST | `/api/returns/{id}/status` | Admin/Manager |
+
+Return states:
+
+```text
+REQUESTED -> APPROVED -> RECEIVED -> REFUNDED
+     |
+     +----> REJECTED
+```
+
+### Notifications
+| Method | Endpoint | Access |
+|---|---|---|
+| GET | `/api/notifications` | Auth |
+| PATCH | `/api/notifications/{id}/read` | Owner |
+| PATCH | `/api/notifications/read-all` | Auth |
+
+### Reporting
+`GET /api/dashboard` returns role-specific dashboard metrics.
+
+### Audit
+`GET /api/audit-logs` is admin-only. Audit records are append-only through the application; no update/delete API is exposed.
+
+## 10. Error contract
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INSUFFICIENT_INVENTORY",
+    "message": "Insufficient inventory for product 1"
+  }
+}
+```
+
+Typical codes include:
+
+- `INSUFFICIENT_INVENTORY` - 409
+- `INVALID_ORDER_STATUS` - 409
+- `INVALID_RETURN_STATUS` - 409
+- `WAREHOUSE_ACCESS_DENIED` - 403
+- `PRODUCT_INACTIVE` - 409
+- `DUPLICATE_SKU` - 409
+- `INVALID_INVENTORY_TRANSFER` - 400
+- `UNAUTHORIZED` - 401
+- `FORBIDDEN` - 403
+- `NOT_FOUND` - 404
+- `VALIDATION_ERROR` - 422
+
+## 11. Database design
+
+Core tables:
+
+```text
+users
+roles (role is represented as a constrained application enum)
+categories
+products
+warehouses
+warehouse_users
+inventory
+inventory_transactions
+orders
+order_items
+order_status_history
+order_assignments
+returns
+return_items
+notifications
+audit_logs
+refresh_tokens
+idempotency_keys
+```
+
+Important constraints/indexes:
+
+- unique user email
+- unique product SKU
+- unique product/warehouse inventory pair
+- unique warehouse/user membership
+- unique refresh-token JTI
+- unique `(idempotency key, user, endpoint)`
+- non-negative product prices
+- non-negative inventory quantities
+- indexed order number/status/created time
+- foreign keys on all relationships
+
+## 12. Idempotency
+
+The schema contains `idempotency_keys` and request models accept `idempotency_key`. For a hardened production deployment, persist the request fingerprint and exact HTTP response before returning it, and reject a reused key with a different request body. This repository keeps the storage boundary explicit so the mechanism can be extended without putting business logic into route handlers.
+
+## 13. Background jobs
+
+Notifications are persisted synchronously with the business transaction so an order event and its notification cannot diverge. A production deployment can move delivery to Celery/Redis after commit while retaining the database notification record as the durable source.
+
+## 14. Testing
+
+Run:
+
+```powershell
+pytest -q
+```
+
+For full integration testing, point `DATABASE_URL` at a disposable PostgreSQL test database and add concurrent HTTP tests around the inventory reservation service.
+
+## 15. Production deployment checklist
+
+1. Use a managed PostgreSQL instance.
+2. Generate a cryptographically random `SECRET_KEY`.
+3. Store secrets in the deployment platform, never Git.
+4. Run `alembic upgrade head` during release/deploy.
+5. Run multiple Uvicorn workers behind a load balancer.
+6. Use HTTPS.
+7. Configure database connection pool sizes for the deployment capacity.
+8. Add structured logs, metrics and tracing.
+9. Move outbound notification delivery to Celery/Redis if email/SMS/push is required.
+10. Add a separate PostgreSQL test database and CI pipeline.
+11. Add rate limiting for authentication endpoints.
+12. Back up PostgreSQL and test restore procedures.
+
+## 16. Postman
+
+Import `postman_collection.json`. Set `base_url` to `http://127.0.0.1:8000`. The collection contains the main authentication, product, warehouse, inventory, order, return, notification and dashboard requests.
