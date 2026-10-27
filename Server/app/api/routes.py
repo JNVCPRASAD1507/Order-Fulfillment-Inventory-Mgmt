@@ -15,7 +15,7 @@ from app.services.common import audit, notify
 from datetime import datetime
 from uuid import uuid4
 
-router = APIRouter(tags=["Api Endpoints Routes"] )
+router = APIRouter(tags=["Api Endpoints Routes"])
 
 
 def commit(db):
@@ -113,12 +113,26 @@ def update_product(
     id: int, data: ProductIn, db=Depends(get_db), user=Depends(roles(Role.ADMIN))
 ):
     p = db.get(Product, id)
+
     if not p:
         raise NotFoundError("Product not found")
+
+    # Check SKU uniqueness when updating
+    existing_product = (
+        db.query(Product).filter(Product.sku == data.sku, Product.id != id).first()
+    )
+
+    if existing_product:
+        raise DomainError("DUPLICATE_SKU", "SKU already exists", 409)
+
+    # Update product fields
     for k, v in data.model_dump().items():
         setattr(p, k, v)
+
     audit(db, user.id, "Product Updated", "product", id)
+
     commit(db)
+
     return p
 
 
